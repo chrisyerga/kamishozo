@@ -1,0 +1,1002 @@
+<html>
+<head>
+  <title>紙肖像</title>
+  <script src="snap.svg.js"></script>
+  <script>
+  // TODO:
+  //   1. Cooperative multitasking. Run paperizer in steps driven by a window timer so the UI doesn't freeze up
+  //      and we can see what's happening
+  //
+  //   2. Fix the pixel sampling bugs. Right now the geometry slicer stuff doesn't propoerly erase the previous
+  //      slice and we thus over-sample each piece of geomtry
+  //
+  //   3. Generate vector files in addition to raster files for paper versions.
+  //
+  //   4. Use Semantic UI for interface
+  </script>
+  <style media="screen" type="text/css">
+  .container 
+  {
+    background-color: #444466;
+    padding: 15px;
+    float: left;
+    width: auto;
+  }
+  
+  .controlgroup-title
+  {
+    font-family: Arial;
+    font-weight: 600;
+    font-size: 16px;
+    padding: 7px;
+    margin: 0px;
+    background-color: #779;
+    color: #222;
+    width: auto;
+    margin-top: 20px;
+  }
+
+  #controlgroup
+  {
+    font-family: Arial;
+    font-weight: 400;
+    font-size: 12px;
+    padding: 7px;
+    margin: 0px;
+    background-color: #779;
+    color: #222;
+    width: auto;
+  }
+
+  #controls
+  {
+    float: left;
+    background-color: transparent;
+    width: 300px;
+    padding: 10px;
+    margin-right: 10px;
+  }
+
+  #container
+  {
+    float: right;
+  }
+
+  #histogram
+  {
+    background-color: #000;
+    margin-bottom: 18px;
+  }
+
+  #pixels
+  {
+    float: left;
+  }
+  
+  #paper
+  {
+    float: left;
+
+  }
+
+  #downloaddxf
+  {
+    font-size: 14pt;
+    color: #bdb;
+  }
+  
+  body {
+  font: 14px/20px 'Helvetica Neue Light', HelveticaNeue-Light, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  xxxmax-width: 820px;
+  margin: 0 auto;
+  padding: 10px;
+  color: #6e6;
+}
+
+pre, code, textarea {
+  font: 12px/20px Monaco, monospace;
+  border: 1px solid #CCC;
+  border-radius: 3px;
+  background: #F9F9F9;
+  padding: 0 3px;
+  color: #555;
+}
+pre, textarea {
+  padding: 10px;
+  width: 100%;
+}
+textarea {
+  height: 200px;
+}
+textarea:focus {
+  outline: none;
+}
+
+canvas { cursor: move; }
+
+</style>
+
+</head>
+
+<body bgcolor="#334" onload="onload()">
+  <h1>紙肖像</h1>
+
+
+
+  <div id="controls" class="container">
+
+  <canvas id="histogram" width=256 height=150></canvas>
+
+
+  <span class="controlgroup-title">Source Image</span>
+  <div id="controlgroup">
+    Choose Picture: 
+  <select id="pictureControl" onchange="pictureChosen()">
+    <option value="ad.jpg">Ad</option>
+    <option value="okujima3.png">Aki</option>
+    <option value="dansong2.jpg">Dan</option>
+    <option value="danseet.jpg">Dan Seet</option>
+    <option value="lazysunday.jpg">Pico Smile</option>
+    <option value="kurisu.jpg">Chris Smile</option>
+    <option value="clo.jpeg">Clo</option>
+    <option value="pico-car.jpg">Pico Car</option>
+  </select> 
+
+  <div> 
+  Tone Correction:
+  <input id="toneControl" type="range"  min="0" max="100" onchange="toneChanged()">
+  </div>
+
+  <div>
+  Box Size:
+  <input id="boxSizeControl" type="range"  min="2" max="100" value="10" onchange="boxSizeChanged()">
+  </div>
+  <div>
+  Halftone Geometry:
+  <select id="geometryControl" onchange="geometryChosen()">
+    <option value="circle">Circle</option>
+    <option value="invcircle">Inverse Circle</option>
+    <option value="square">Square</option>
+    <option value="invsquare">Inverse Square</option>
+    <option value="line">Line</option>
+    <option value="invline">Inverse Line</option>
+  </select>
+  </div>
+  </div>
+
+
+  <br/>
+
+  <span class="controlgroup-title">Ouput Paper</span>
+  <div id="controlgroup">
+  Paper Color:
+  <select id="paperColorControl" onchange="paperColorChosen()">
+    <option value="#ffdd11">Yellow</option>
+    <option value="#551188">Dark Purple</option>
+    <option value="#ffbbcc">Pink</option>
+  </select>
+  </div>
+
+  <div id="controlgroup">
+  Pixel Color:
+  <select id="pixelColorControl" onchange="pixelColorChosen()">
+    <option value="#000000">Black</option>
+    <option value="#551188">Dark Purple</option>
+    <option value="#005500">Dark Green</option>
+    <option value="#ffdd11">Yellow</option>
+    <option value="#ffffff">White</option>
+  </select>
+  </div>
+
+  <br/>
+  <a id="downloaddxf" href="">Download Generated DXF File</a>
+  <br/><br/>
+  
+  </div>
+
+
+  <canvas id="paper" width=1500 height=1500></canvas>
+  <canvas id="pixels" width=1500 height=1500></canvas>
+
+  <canvas id="geosegment" width=2000 height=2000></canvas>
+  <canvas id="compositor" width=2000 height=2000></canvas>
+
+  <div id="svg"></div>
+  <script>
+
+  function onload()
+  {
+
+  }
+
+  var canvas = document.getElementById('pixels');
+  var dc = canvas.getContext('2d');
+  var pixels = 0;
+  var paperColor = "rgb(0,0,0)";
+  var pixelColor = "rgb(70,0,100)";
+  var dxfFile = "";
+  var dxflink = document.getElementById("downloaddxf");
+  var toneAdjust = 0.0;
+  var papercanvas = document.getElementById('paper');
+  var paperdc = papercanvas.getContext('2d');
+  var boxSizeValue = 10;
+  var geometryFunction = inversecircle;
+  var histogramData = [];
+  var histoMax = 0;
+  var appstate = "app-init";
+  var snap;
+
+  // Start things up by first async loading a default image. This gives the browser
+  // time to parse the rest of the JS and then once the image loads, we kick off the
+  // main UI loop.
+  var img = new Image();
+  img.addEventListener("load", function() {
+    // Draw image into the "pixels" canvas
+    dc.drawImage(img, 0, 0);
+    pixels = dc.getImageData(0,0, 1000, 1500);
+    appstate = "app-init";
+    window.setTimeout(mainUILoop, 1);
+  }, false);
+  img.src = 'pico-car.jpg'; // Set source path
+  
+  // Paperizer state variables
+  var circleCount = 20;
+  var extrema;
+  var stepIndex = 0;
+
+    // Clear entire "paper" to black
+    dc.fillStyle = "#007";
+    dc.fillRect(0,0,9999,9999);
+
+  function appInit()
+  {
+  }
+
+
+  function mainUILoop()
+  {
+    var nextLoopDelay = 1;
+
+    switch (appstate)
+    {
+      case "app-init":
+        appInit(); 
+        appstate = "paperize-begin"; 
+        break;
+
+      case "paperize-begin":
+        // Calculate how many iterations there are
+        extrema = concentricCircleGeometry.getExtrema(img.width, img.height, circleCount);
+        stepIndex = 0;
+
+        // Clear entire "paper" to black
+        paperdc.fillStyle = paperColor;
+        paperdc.fillRect(0,0,9999,9999);
+
+        // Now start running the paperizer loop
+        appstate = "paperize-run";
+        break;
+
+      case "paperize-run":
+        paperizeStep(stepIndex);
+        ++stepIndex;
+        if (stepIndex >= (extrema + 0))
+        {
+          appstate = "paperize-end";
+        }
+        break;
+
+      case "paperize-end":
+        writeDXF();
+        appstate = "idle";
+        break;
+
+      case "idle":
+        nextLoopDelay = 100;
+        break;
+
+    }
+
+    window.setTimeout(mainUILoop, nextLoopDelay);
+  }
+
+
+
+  var currentSVGcircle = 0;
+  function paperizeStep(stepIndex)
+  {
+    var cDCsrc  = document.getElementById("geosegment").getContext("2d");
+    var cDCdest = document.getElementById("compositor").getContext("2d");
+
+    {
+      // 1, Clear compositor buffer to zero-alpha
+      cDCsrc.globalCompositeOperation = "copy";
+      cDCsrc.fillStyle = "rgba(0,0,0,0.0)";
+      cDCsrc.fillRect(0,0,9999,9999);
+
+      // 2. Draw the current geometry segment into the compositor at full-white
+      cDCsrc.fillStyle  = "rgba(255,255,255,1.0)";
+      cDCsrc.strokeStyle = "rgba(255,255,255,1.0)";
+      var bounds = concentricCircleGeometry.drawGeometrySegment(img.width, img.height, circleCount, stepIndex, 1.0, false, cDCsrc);
+
+      // 3. Measure the pixel luminance in the region to establish the baseline
+      var fullLuminance = getTotalLuminance(cDCsrc.getImageData(bounds[0], bounds[1], bounds[2], bounds[3]));
+
+      // 4. Draw picture segment on top of just the geometry segment
+      cDCdest.globalCompositeOperation = "source-over";
+      cDCdest.fillStyle = "rgba(0,255,0,1.0)";
+      cDCdest.fillRect(0,0,9999,9999);
+      cDCdest.globalCompositeOperation = "source-in";
+      cDCdest.drawImage(document.getElementById("geosegment"), 0, 0);
+      cDCdest.drawImage(canvas, 0, 0);
+
+      // 5. Now calculate the pixel luminance of the intersection of the image and the current geometry segment
+      var imageLuminance = getTotalLuminance(cDCdest.getImageData(bounds[0], bounds[1], bounds[2], bounds[3]));
+
+      // 6. Finally draw the geometry segment into the paper
+      paperdc.strokeStyle = "#ff0";
+      concentricCircleGeometry.drawGeometrySegment(img.width, img.height, circleCount, stepIndex, imageLuminance/fullLuminance, true, paperdc);
+    }
+  }
+
+
+  var radialSteps = 108;
+
+
+  concentricCircleGeometry = 
+  {
+    "name": "Concentric Circles",
+
+    "getExtrema": function(width, height, fidelity) 
+    {
+      // Here we must decide the number of concentric circles to create and how many angular
+      // steps to use. Degrading the quality *could* be a function of simply changing either
+      // the number of circles or the angular steps. TODO: export a property of controls so
+      // things like this are possible to control independently
+      //
+      // For now, we assume fidelity is of range 1..100 and it maps to how many circles you 
+      // get. We'll use radialSteps steps of 10 degrees for all circles. So extrema is simply the
+      // value radialSteps * fidelity. How we turn this into geometry has some nuance to it that we
+      // must deal with in the segment generator below.
+      return radialSteps * fidelity;
+    },
+
+    "drawGeometrySegment": function(width, height, fidelity, segmentIndex, luma, createGeometry, dc)
+    {
+      // SegmentIndex is an integer that simply counts up from 0..extrema-1 and the caller
+      // has no knowledge of its semantics. It's the job of this function to draw the segment
+      // of the traversal geometry. Note that the caller passes in a DC with fillMode, blengMode,
+      // etc. parameters already set up. So all we must do is fill the geometry. I suppose we could
+      // define the API here to simply return a path, but I have a feeling that will be insufficient
+      // for some traversers. Also note that for any given value of segmentIndex, this function
+      // will be called multiple times with various DCs.
+
+      // Handle any first-time initialization
+      if (0 == segmentIndex)
+      {
+        this._currentSVGCircle = 0;
+        this._radiusWidths = [];
+        this._snap = Snap(1500,1500);
+        snap = this._snap;
+      }
+
+      var epsilon = (2 * Math.PI / radialSteps) * 0.03;
+      var circleIndex = Math.floor(segmentIndex / radialSteps);
+      var perCircleWidth = width / fidelity / 2;
+      var radius = perCircleWidth*(1+circleIndex) - (perCircleWidth/2);
+      var lineWidth = perCircleWidth * 0.925 * luma;
+      var startAngle = (segmentIndex % radialSteps) * (2 * Math.PI / radialSteps) - epsilon;
+      var endAngle = startAngle + (2 * Math.PI / radialSteps) + epsilon;
+
+      dc.lineWidth = lineWidth;
+      dc.beginPath();
+      dc.arc(width/2, height/2, radius, startAngle, endAngle, false);
+      dc.stroke();
+
+      var medianAngle = (startAngle+endAngle)/2;
+      var posX = radius * Math.cos( medianAngle );
+      var posY = radius * Math.sin( medianAngle );
+      var centerX = width/2  + posX;
+      var centerY = height/2 + posY;
+      var slop = (perCircleWidth * 0.0525) * circleIndex;
+
+      // Handle SVG geometry creation
+      if (createGeometry)
+      {
+        if (circleIndex == this._currentSVGCircle)
+        {
+          // We are still working on the same circle. Append the radius width for SVG geometry creation
+          this._radiusWidths.push(lineWidth);
+        }
+        else
+        {
+          // We finished a circle and are beginning a new one.
+          var svgPath = "";
+          radius = perCircleWidth*circleIndex - (perCircleWidth/2);
+
+          // First generated the outer contour of the ring
+          for (var radidx=0; radidx<this._radiusWidths.length; ++radidx)
+          {
+            if (radidx == 0)
+            {
+              // Special case for first point. We move absolutely to an on-curve point
+              // in the middle of the arc sweep. When closing the curve, the right thing
+              // will happen.
+              this._lastX = width/2  + ((this._radiusWidths[radidx]/2+radius) * Math.cos(medianAngle));
+              this._lastY = height/2 + ((this._radiusWidths[radidx]/2+radius) * Math.sin(medianAngle));
+              this._lastRadius = this._radiusWidths[radidx]/2+radius;
+              svgPath += "M" +  this._lastX.toFixed(3) + "," + this._lastY.toFixed(3);
+            }
+            else
+            {
+              // Quadratic bezier connecting to next point. 
+              var startAngle = (radidx % radialSteps) * (2 * Math.PI / radialSteps) - epsilon;
+              var endAngle = startAngle + (2 * Math.PI / radialSteps) + epsilon;
+
+              // 1. First calculate control point
+              var ctx = width/2  + this._lastRadius * Math.cos(startAngle);
+              var cty = height/2 + this._lastRadius * Math.sin(startAngle);
+
+              // 2. Next calculate on-curve point
+              this._lastX = width/2  + ((this._radiusWidths[radidx]/2+radius) * Math.cos(endAngle));
+              this._lastY = height/2 + ((this._radiusWidths[radidx]/2+radius) * Math.sin(endAngle));
+              this._lastRadius = this._radiusWidths[radidx]/2+radius;
+              svgPath += " Q" + ctx.toFixed(3) + "," + cty.toFixed(3) + " " + this._lastX.toFixed(3) + "," + this._lastY.toFixed(3) + "\n";
+            }
+
+            // Last point on this contour?
+            if (radidx == this._radiusWidths.length-1)
+            {
+              svgPath += " Z  ";
+            }
+          }
+
+          // Next generate the CCW inner contour
+          for (var radidx=this._radiusWidths.length-1; radidx>=0; --radidx)
+          {
+            if (radidx == this._radiusWidths.length-1)
+            {
+              // Special case for first point. We move absolutely to an on-curve point
+              // in the middle of the arc sweep. When closing the curve, the right thing
+              // will happen.
+              var firstAngle = (2 * Math.PI) - (2 * Math.PI / radialSteps)/2;
+              this._lastX = width/2  + ((-this._radiusWidths[radidx]/2+radius) * Math.cos(0));
+              this._lastY = height/2 + ((-this._radiusWidths[radidx]/2+radius) * Math.sin(0));
+              this._lastRadius = -this._radiusWidths[radidx]/2+radius;
+              svgPath += "M" +  this._lastX.toFixed(3) + "," + this._lastY.toFixed(3);
+            }
+            else
+            {
+              // Quadratic bezier connecting to next point. 
+              var startAngle = (radidx % radialSteps) * (2 * Math.PI / radialSteps) - epsilon;
+              var endAngle = startAngle - (2 * Math.PI / radialSteps) + epsilon;
+
+              // 1. First calculate control point
+              var ctx = width/2  + this._lastRadius * Math.cos(startAngle);
+              var cty = height/2 + this._lastRadius * Math.sin(startAngle);
+
+              // 2. Next calculate on-curve point
+              this._lastX = width/2  + ((-this._radiusWidths[radidx]/2+radius) * Math.cos(endAngle));
+              this._lastY = height/2 + ((-this._radiusWidths[radidx]/2+radius) * Math.sin(endAngle));
+              this._lastRadius = -this._radiusWidths[radidx]/2+radius;
+              svgPath += " Q" + ctx.toFixed(3) + "," + cty.toFixed(3) + " " + this._lastX.toFixed(3) + "," + this._lastY.toFixed(3) + "\n";
+            }
+
+            // Last point on this contour?
+            if (radidx == this._radiusWidths.length-1)
+            {
+              svgPath += " Z  ";
+            }
+          }
+
+          this._currentSVGCircle = circleIndex;
+          this._radiusWidths = [];
+
+          // Add to SVG doc
+          var newpath = this._snap.path();
+          newpath.attr({ d: svgPath, fill: "#cf2"});
+          console.log(svgPath);
+        }
+      }
+
+      return [centerX-perCircleWidth/2-slop, centerY-perCircleWidth/2-slop, perCircleWidth+2*slop, perCircleWidth+2*slop];
+    }
+
+}
+
+  function getTotalLuminance(pixelData)
+  {
+    var totalPixels = pixelData.height * pixelData.width * 4;
+    var idx = 0;
+    var accumulator = 0;
+
+    while (idx < totalPixels)
+    {
+      var r = pixelData.data[idx++];
+      var g = pixelData.data[idx++];
+      var b = pixelData.data[idx++];
+      var a = pixelData.data[idx++];
+
+      var luminance = (0.3*r + 0.5*g + 0.2*b) ;
+      accumulator += luminance;
+    }
+
+    return accumulator;
+  }
+
+
+  function testCircles()
+  {
+    var dc = document.getElementById('paper').getContext('2d');
+
+    var circleCount = 25;
+    var extrema = concentricCircleGeometry.getExtrema(img.width, img.height, circleCount);
+    var cDCsrc  = document.getElementById("geosegment").getContext("2d");
+    var cDCdest = document.getElementById("compositor").getContext("2d");
+
+    // Clear entire "paper" to black
+    dc.fillStyle = "#007";
+    dc.fillRect(0,0,9999,9999);
+
+    for (var idx=0; idx<extrema; ++idx)
+    {
+      // 1, Clear compositor buffer to zero-alpha
+      cDCsrc.globalCompositeOperation = "source-over";
+      cDCsrc.fillStyle = "rgba(0,0,0,0.0)";
+      cDCsrc.fillRect(0,0,9999,9999);
+
+      // 2. Draw the current geometry segment into the compositor at full-white
+      cDCsrc.fillStyle  = "rgba(255,255,255,1.0)";
+      cDCsrc.strokeStyle = "rgba(255,255,255,1.0)";
+      var bounds = concentricCircleGeometry.drawGeometrySegment(img.width, img.height, circleCount, idx, 1.0, false, cDCsrc);
+
+      // 3. Measure the pixel luminance in the region to establish the baseline
+      var fullLuminance = getTotalLuminance(cDCsrc.getImageData(bounds[0], bounds[1], bounds[2], bounds[3]));
+
+      // 4. Draw picture segment on top of just the geometry segment
+      cDCdest.globalCompositeOperation = "source-over";
+      cDCdest.fillStyle = "rgba(0,255,0,1.0)";
+      cDCdest.fillRect(0,0,9999,9999);
+      cDCdest.globalCompositeOperation = "source-in";
+      cDCdest.drawImage(document.getElementById("geosegment"), 0, 0);
+      cDCdest.drawImage(canvas, 0, 0);
+
+      // 5. Now calculate the pixel luminance of the intersection of the image and the current geometry segment
+      var imageLuminance = getTotalLuminance(cDCdest.getImageData(bounds[0], bounds[1], bounds[2], bounds[3]));
+
+      // 6. Finally draw the geometry segment into the paper
+      paperdc.strokeStyle = "#ff0";
+      concentricCircleGeometry.drawGeometrySegment(img.width, img.height, circleCount, idx, imageLuminance/fullLuminance, false,paperdc);
+      console.log( "Luma: " + imageLuminance);
+    }
+
+
+  }
+
+  function pixelColorChosen(e)
+  {
+      var control = document.getElementById('pixelColorControl');
+      var index = control.selectedIndex;
+      var color = control.options[index].value;
+      
+      pixelColor = color;
+      paper();
+  }
+    
+  function paperColorChosen(e)
+  {
+      var control = document.getElementById('paperColorControl');
+      var index = control.selectedIndex;
+      var color = control.options[index].value;
+      
+      paperColor = color;
+      paper();
+  }
+
+  function geometryChosen(e)
+  {
+      var control = document.getElementById('geometryControl');
+      var index = control.selectedIndex;
+      var geom = control.options[index].value;
+      
+      switch (geom)
+      {
+        case "circle": geometryFunction=circle; break;
+        case "invcircle": geometryFunction=inversecircle; break;
+        case "square": geometryFunction=square; break;
+        case "invsquare": geometryFunction=inversesquare; break;
+        case "line": geometryFunction=line; break;
+        case "invline": geometryFunction=inverseLine; break;
+      }
+      paper();
+  }
+
+  function pictureChosen(e)
+  {
+      var control = document.getElementById('pictureControl');
+      var index = control.selectedIndex;
+      var url = control.options[index].value;
+      
+      img.src = url;
+  }
+  function toneChanged()
+  {
+    var control = document.getElementById('toneControl');
+    var tone = (control.valueAsNumber-50)/35;
+    toneAdjust = tone;
+    paper();
+  }
+
+  function boxSizeChanged()
+  {
+    var control = document.getElementById('boxSizeControl');
+    boxSizeValue = control.valueAsNumber;
+    circleCount = boxSizeValue;
+    paper();
+  }
+
+  function traversePixels(pixels, boxsize, paperizer)
+  {
+    var row=0, col=0;
+
+    histogramData = [];
+    histoMax = 0;
+    var ix=0;
+    for (ix=0; ix<256; ++ix)
+    {
+      histogramData[ix] = 0;
+    }
+    
+    while (row*boxsize+boxsize-1 < img.height)
+    {
+      // Sample a box of pixels
+      var accumulator = 0.0;
+      for (boxindex=0; boxindex<boxsize*boxsize; ++boxindex)
+      {
+        var boxy = Math.floor(boxindex / boxsize);
+        var boxx = Math.floor(boxindex % boxsize);
+        var pixelIndex = 4 * ((row*boxsize+boxy)*pixels.width + col*boxsize + boxx);
+        
+        var r = pixels.data[pixelIndex];
+        var g = pixels.data[pixelIndex+1];
+        var b = pixels.data[pixelIndex+2];
+        
+        var luminance = 0.3*r + 0.5*g + 0.2*b;
+        accumulator += luminance;
+      }
+
+      var intluma = Math.floor( accumulator / (boxsize*boxsize) );
+      var floatluma = 1.0*intluma / 256.0;
+
+      floatluma = (1.0+toneAdjust)*floatluma;
+      intluma = Math.floor( (1.0+toneAdjust)*intluma );
+
+      histogramData[intluma] = histogramData[intluma]+1;
+      if (histogramData[intluma] > histoMax)
+      {
+        histoMax = histogramData[intluma];
+      }
+
+      paperizer(col, row, boxsize, intluma, floatluma);
+
+      col++;
+      if (col*boxsize >= img.width)
+      {
+        col = 0;
+        row++;
+      }
+    }
+    
+  }
+  
+   function inversecircle(x, y, boxsize, intluma, floatluma)
+  {
+    paperdc.fillStyle = pixelColor;
+    x = x*boxsize + boxsize/2;
+    y = y*boxsize + boxsize/2;
+      
+      if (floatluma > 0.7)
+      {
+          floatluma = 1.0;
+      }
+      if (floatluma < 0.15)
+      {
+        floatluma = 0.15;
+      }
+      var radius = boxsize/2.1 * (1.0-floatluma);
+   
+    paperdc.beginPath();
+    paperdc.arc(x, y, radius, 0, 2 * Math.PI, false);
+    paperdc.fill();
+
+    if (radius > 0)
+      dxfFile += "  0\nCIRCLE\n  39\n0.0\n  62\n1\n  8\n0\n  10\n" + x + "\n  20\n" + y + "\n  30\n0.0\n 40\n" + radius + "\n";
+  }
+
+
+   function circle(x, y, boxsize, intluma, floatluma)
+  {
+      if (floatluma > 0.82)
+      {
+          floatluma = 0.82;
+      }
+      if (floatluma < 0.15)
+      {
+        floatluma = 0.0;
+      }
+    paperdc.fillStyle = pixelColor;
+    x = x*boxsize + boxsize/2;
+    y = y*boxsize + boxsize/2;
+      
+      var radius = boxsize/2.15 * (floatluma);
+   
+    paperdc.beginPath();
+    paperdc.arc(x, y, radius, 0, 2 * Math.PI, false);
+    paperdc.fill();
+
+    if (radius > 0)
+      dxfFile += "  0\nCIRCLE\n  39\n0.0\n  10\n" + x + "\n  20\n" + y + "\n  30\n0.0\n 40\n" + radius + "\n";
+  }
+
+  
+  function square(x, y, boxsize, intluma, floatluma)
+  {
+      paperdc.fillStyle = pixelColor;
+      x = x*boxsize + boxsize/2;
+      y = y*boxsize + boxsize/2;
+      
+      var radius = boxsize/2 * floatluma;
+      paperdc.fillRect(x-radius, y-radius, radius*2, radius*2);
+  }
+  
+  function inversesquare(x, y, boxsize, intluma, floatluma)
+  {
+      paperdc.fillStyle = pixelColor;
+      x = x*boxsize + boxsize/2;
+      y = y*boxsize + boxsize/2;
+      
+      if (floatluma > 0.78)
+      {
+          floatluma = 1.0;
+      }
+      var radius = boxsize/2 * (1.0-floatluma);
+      paperdc.fillRect(x-radius, y-radius, radius*2, radius*2);
+  }
+  
+  var lastRadius = 0;
+  var radiusSteps = [1,0,1,0,1,1,1,2,1,1,2,1,2,1,2,2,2,2,2,2];
+  
+  function inverseLine(x, y, boxsize, intluma, floatluma)
+  {
+      line(x, y, boxsize, 255-intluma, 1.0-floatluma);
+  }
+
+  function line(x, y, boxsize, intluma, floatluma)
+  {
+      paperdc.fillStyle = pixelColor;
+      x = x*boxsize;
+      y = y*boxsize + boxsize/2;
+      
+      var radius = boxsize/2 * floatluma;
+      
+      // Line changing thickness?
+      if (true || 0==x || Math.floor(lastRadius)==Math.floor(radius))
+      {
+        // no. simple case
+        paperdc.fillRect(x, y-radius, boxsize, radius*2);
+      }
+      else
+      {
+        var delta = Math.floor(radius)-Math.floor(lastRadius);
+        if (delta > 0)
+        {
+          // Getting wider
+          var offset = 0;
+          var thicken = 0;
+          while (Math.floor(lastRadius+thicken) < Math.floor(radius))
+          {
+            thicken += radiusSteps[offset++];
+            paperdc.fillRect(x+offset-1, y-lastRadius-thicken, boxsize-offset+1, (lastRadius+thicken)*2);
+            
+          }
+        }
+        else 
+        {
+          var offset = 0;
+          var thin = 0;
+          while (Math.floor(lastRadius-thin) > Math.floor(radius))
+          {
+              thin += radiusSteps[offset++];
+              paperdc.fillRect(x+offset-1, y-lastRadius+thin, boxsize-offset+1, (lastRadius-thin)*2);
+              //paperdc.fillRect(x+boxsize-1-offset, y-lastRadius+thin, 1, (lastRadius-thin)*2);
+              
+          }
+        }
+      }
+      
+      lastRadius = radius;
+  }
+
+  function startDXF()
+  {
+    var str = "  0\nSECTION\n  2\nHEADER\n";
+    str += "  0\nENDSEC\n";
+    str += "  0\nSECTION\n  2\nTABLES\n";
+    str += "  0\nTABLE\n  2\nLTYPE\n  70\n1\n";
+    str += "  0\nLTYPE\n  2\nCONTINUOUS\n  3\nSolid Line\n  72\n65\n  73\n0\n  40\n0.0\n";
+    str += "  0\nENDTAB\n";
+    str += "  0\nTABLE\n  2\nLAYER\n  70\n1\n";
+    str += "  0\nLAYER\n  2\nOpenJsCad\n  62\n7\n  6\ncontinuous\n";
+    str += "  0\nENDTAB\n";
+    str += "  0\nTABLE\n  2\nSTYLE\n  70\n0\n  0\nENDTAB\n";
+    str += "  0\nTABLE\n  2\nVIEW\n  70\n0\n  0\nENDTAB\n";
+    str += "  0\nENDSEC\n";
+    str += "  0\nSECTION\n  2\nBLOCKS\n";
+    str += "  0\nENDSEC\n";
+    str += "  0\nSECTION\n  2\nENTITIES\n";
+
+    dxfFile = str;
+  }
+
+  function writeDXF(string) {
+    window.requestFileSystem  = window.requestFileSystem || window.webkitRequestFileSystem;
+    if(!window.requestFileSystem)
+    {
+      throw new Error("Your browser does not support the HTML5 FileSystem API. Please try the Chrome browser instead.");
+    }
+    // create a random directory name:
+    var dirname = "KamiShozo_DXF_"+parseInt(Math.random()*1000000000, 10)+"."+extension;
+    var extension = "dxf";
+    var filename = "output."+extension;
+
+    var imageControl = document.getElementById('pictureControl');
+    filename = imageControl.options[imageControl.selectedIndex].value.split(".")[0] + "-" + geometryFunction.name + "-" + boxSizeValue + ".svg"
+
+    var that = this;
+    window.requestFileSystem(TEMPORARY, 20*1024*1024, function(fs){
+        fs.root.getDirectory(dirname, {create: true, exclusive: true}, function(dirEntry) {
+            that.outputFileDirEntry = dirEntry;
+            dirEntry.getFile(filename, {create: true, exclusive: true}, function(fileEntry) {
+                 fileEntry.createWriter(function(fileWriter) {
+                    fileWriter.onwriteend = function(e) {
+                      that.hasOutputFile = true;
+                      dxflink.href = fileEntry.toURL();
+                      dxflink.type = "application/dxf";
+                      //that.downloadOutputFileLink.innerHTML = that.downloadLinkTextForCurrentObject();
+                      //that.downloadOutputFileLink.setAttribute("download", fileEntry.name);
+                     //that.enableItems();
+                      //if(that.onchange) that.onchange();
+                    };
+                    fileWriter.onerror = function(e) {
+                      throw new Error('Write failed: ' + e.toString());
+                    };
+                    
+                    dxfBlob = new Blob([snap.toString()], {type : 'application/dxf'});              
+                    fileWriter.write(dxfBlob);
+                  }, 
+                  function(fileerror){OpenJsCad.FileSystemApiErrorHandler(fileerror, "createWriter");} 
+                );
+              },
+              function(fileerror){OpenJsCad.FileSystemApiErrorHandler(fileerror, "getFile('"+filename+"')");} 
+            );
+          },
+          function(fileerror){OpenJsCad.FileSystemApiErrorHandler(fileerror, "getDirectory('"+dirname+"')");} 
+        );         
+      }, 
+      function(fileerror){OpenJsCad.FileSystemApiErrorHandler(fileerror, "requestFileSystem");}
+    );
+  }
+
+  function endDXF()
+  {
+    dxfFile += "  0\nENDSEC\n  0\nEOF\n";
+    writeDXF();
+  }
+  
+  function paper()
+  {
+      appstate = "app-init";
+  }
+
+  function paperold()
+  {
+    var poop = 1;
+      
+    paperdc.fillStyle = paperColor;
+    paperdc.fillRect(0,0,1000,1500);
+
+    startDXF();
+    traversePixels(pixels, boxSizeValue, geometryFunction);
+    endDXF();
+
+    // Draw histogram
+    var hc = document.getElementById('histogram');
+    var hdc = hc.getContext('2d');
+    hdc.fillStyle = "#000";
+    hdc.fillRect(0,0,999,999);
+    hdc.fillStyle = "rgba(192,32,256,1.0)";
+    for (var ix=0; ix<256; ++ix)
+    {
+      var count = histogramData[ix];
+      if (count > 128)
+      {
+        count = 128;
+      }
+
+      hdc.fillRect(ix,128-count, 1, count);
+    }
+
+    var sourceCanvas = document.getElementById('pixels');
+    var modecanvas1 = document.getElementById('modetest1');
+    var dmc1 = modecanvas1.getContext('2d');
+    var modecanvas2 = document.getElementById('modetest2');
+    var dmc2 = modecanvas2.getContext('2d');
+    var modecanvas3 = document.getElementById('modetest3');
+    var dmc3 = modecanvas3.getContext('2d');
+  
+    // Subset of source image
+    dmc1.drawImage(img, 100, 100, 100, 100, 0, 0, 100, 100);
+
+    // Sampling geometry. First clear to 0 alpha
+    dmc2.fillStyle = "rgba(255,255,255,0)";
+    dmc2.fillRect(0,0,1000,1500);
+    dmc2.fillStyle = "rgba(0,0,0,1.0)";
+    dmc2.beginPath();
+    dmc2.arc(50, 50, 20, 0, 2 * Math.PI, false);
+    dmc2.fill();
+
+    // Blended image and sample area
+    dmc3.globalCompositeOperation="source-over";
+    dmc3.drawImage(modecanvas1, 0, 0);
+    dmc3.globalCompositeOperation="destination-in";
+    dmc3.drawImage(modecanvas2, 0, 0);
+   
+    xx = dmc3.getImageData(0,0, 100, 100);
+
+    var pathCanvas = document.getElementById('pathtest');
+    var pdc = pathCanvas.getContext('2d');
+
+    var curve = new CSG.Path2D();
+    curve = curve.appendPoint([100,100]);
+    curve = curve.appendBezier([[150,150], [200,100]], { resolution: 64 });
+    curve = curve.appendBezier([[250, 50],  [300,100]], { resolution: 64 });
+
+    var cag = null;
+    for (var i = 1; i < curve.points.length; i++) {
+      var segment = new CSG.Path2D([ curve.points[i-1], curve.points[i]] );
+      var segmentCag = segment.expandToCAG(2+(i%4), 20);
+      if (null == cag)
+      {
+        cag = segmentCag;
+      }
+      else
+      {
+        cag = cag.union(segmentCag);
+      }
+    };
+    var path = cag.getOutlinePaths();
+    var points = path[0].points;
+
+    pdc.beginPath();
+    pdc.moveTo(points[0].x, points[0].y);
+    for (var i = 1; i < points.length; i++) {
+      pdc.lineTo(points[i].x, points[i].y);
+    };
+    pdc.closePath();
+    pdc.fillStyle = "#ffcc00"
+    pdc.fill();
+
+    flip = true;
+    for (var i = 1; i < curve.points.length; i++) {
+      pdc.beginPath();
+      pdc.moveTo(curve.points[i-1].x, curve.points[i-1].y);
+      pdc.lineTo(curve.points[i].x, curve.points[i].y);
+      pdc.strokeStyle = flip ? "green" : "red";
+      flip = !flip;
+      pdc.stroke();
+    };
+    
+  }
+  </script>
+</body>
+</html>
